@@ -1,0 +1,48 @@
+diff -pru ngx_openresty-1.9.3.1/bundle/nginx-1.9.3/src/http/ngx_http.c package/ngx_openresty-1.9.3.1/bundle/nginx-1.9.3/src/http/ngx_http.c
+--- ngx_openresty-1.9.3.1/bundle/nginx-1.9.3/src/http/ngx_http.c	2015-08-12 11:23:52.000000000 +0800
++++ package/ngx_openresty-1.9.3.1/bundle/nginx-1.9.3/src/http/ngx_http.c	2016-01-19 13:05:44.496301483 +0800
+@@ -72,6 +72,7 @@ ngx_uint_t   ngx_http_max_module;
+ 
+ ngx_http_output_header_filter_pt  ngx_http_top_header_filter;
+ ngx_http_output_body_filter_pt    ngx_http_top_body_filter;
++ngx_http_output_write_filter_pt   ngx_http_top_write_filter;
+ ngx_http_request_body_filter_pt   ngx_http_top_request_body_filter;
+ 
+ 
+diff -pru ngx_openresty-1.9.3.1/bundle/nginx-1.9.3/src/http/ngx_http_core_module.h package/ngx_openresty-1.9.3.1/bundle/nginx-1.9.3/src/http/ngx_http_core_module.h
+--- ngx_openresty-1.9.3.1/bundle/nginx-1.9.3/src/http/ngx_http_core_module.h	2015-07-15 00:46:06.000000000 +0800
++++ package/ngx_openresty-1.9.3.1/bundle/nginx-1.9.3/src/http/ngx_http_core_module.h	2016-01-19 13:07:30.153059937 +0800
+@@ -536,6 +536,8 @@ ngx_http_cleanup_t *ngx_http_cleanup_add
+ typedef ngx_int_t (*ngx_http_output_header_filter_pt)(ngx_http_request_t *r);
+ typedef ngx_int_t (*ngx_http_output_body_filter_pt)
+     (ngx_http_request_t *r, ngx_chain_t *chain);
++typedef ngx_int_t (*ngx_http_output_write_filter_pt)
++    (ngx_http_request_t *r, off_t bsent);
+ typedef ngx_int_t (*ngx_http_request_body_filter_pt)
+     (ngx_http_request_t *r, ngx_chain_t *chain);
+ 
+diff -pru ngx_openresty-1.9.3.1/bundle/nginx-1.9.3/src/http/ngx_http.h package/ngx_openresty-1.9.3.1/bundle/nginx-1.9.3/src/http/ngx_http.h
+--- ngx_openresty-1.9.3.1/bundle/nginx-1.9.3/src/http/ngx_http.h	2015-07-15 00:46:06.000000000 +0800
++++ package/ngx_openresty-1.9.3.1/bundle/nginx-1.9.3/src/http/ngx_http.h	2016-01-19 13:08:01.735286650 +0800
+@@ -173,6 +173,7 @@ extern ngx_str_t  ngx_http_html_default_
+ 
+ extern ngx_http_output_header_filter_pt  ngx_http_top_header_filter;
+ extern ngx_http_output_body_filter_pt    ngx_http_top_body_filter;
++extern ngx_http_output_write_filter_pt   ngx_http_top_write_filter;
+ extern ngx_http_request_body_filter_pt   ngx_http_top_request_body_filter;
+ 
+ 
+diff -pru ngx_openresty-1.9.3.1/bundle/nginx-1.9.3/src/http/ngx_http_write_filter_module.c package/ngx_openresty-1.9.3.1/bundle/nginx-1.9.3/src/http/ngx_http_write_filter_module.c
+--- ngx_openresty-1.9.3.1/bundle/nginx-1.9.3/src/http/ngx_http_write_filter_module.c	2015-07-15 00:46:07.000000000 +0800
++++ package/ngx_openresty-1.9.3.1/bundle/nginx-1.9.3/src/http/ngx_http_write_filter_module.c	2016-01-19 13:09:41.850006934 +0800
+@@ -261,6 +261,10 @@ ngx_http_write_filter(ngx_http_request_t
+         return NGX_ERROR;
+     }
+ 
++    if (ngx_http_top_write_filter){
++        ngx_http_top_write_filter(r, sent);
++    }
++
+     if (r->limit_rate) {
+ 
+         nsent = c->sent;
