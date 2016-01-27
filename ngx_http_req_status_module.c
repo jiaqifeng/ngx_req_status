@@ -42,6 +42,8 @@ typedef struct {
     ngx_uint_t                      max_bandwidth;
 
     ngx_uint_t                      max_active;
+
+    ngx_uint_t                      rt; // response time
 } ngx_http_req_status_data_t;
 
 typedef struct {
@@ -227,6 +229,47 @@ ngx_http_req_status_write_filter(ngx_http_request_t *r, off_t bsent)
         if (ngx_current_msec > pzn[i].node->last_traffic_update){
             pzn[i].node->last_traffic_update = ngx_current_msec;
         }
+
+        ngx_shmtx_unlock(&pzn[i].zone->shpool->mutex);
+    }
+
+    return NGX_DECLINED;
+}
+
+static ngx_int_t
+ngx_http_req_status_log_handler(ngx_http_request_t *r)
+{
+    // off_t                                   bytes;
+    ngx_uint_t                              i;
+    // ngx_msec_t                              td;
+    ngx_http_req_status_ctx_t              *r_ctx;
+    ngx_http_req_status_data_t             *data;
+    ngx_http_req_status_zone_node_t        *pzn;
+    // ngx_http_req_status_main_conf_t        *rmcf;
+
+    ngx_time_t                   *tp;
+    ngx_msec_int_t                ms;
+    r_ctx = ngx_http_get_module_ctx(r, ngx_http_req_status_module);
+    if (r_ctx == NULL || r_ctx->req_zones.nelts == 0){
+        return NGX_DECLINED;
+    }
+
+    // rmcf = ngx_http_get_module_main_conf(r, ngx_http_req_status_module);
+
+    pzn = r_ctx->req_zones.elts;
+
+    for (i = 0; i < r_ctx->req_zones.nelts; i++){
+        data = &pzn[i].node->data;
+
+        ngx_shmtx_lock(&pzn[i].zone->shpool->mutex);
+
+        // add response time
+        tp = ngx_timeofday();
+        ms = (ngx_msec_int_t)
+             ((tp->sec - r->start_sec) * 1000 + (tp->msec - r->start_msec));
+        ms = ngx_max(ms, 0);
+        data->rt += ms;
+        // add response time
 
         ngx_shmtx_unlock(&pzn[i].zone->shpool->mutex);
     }
@@ -563,7 +606,7 @@ ngx_http_req_status_show_handler(ngx_http_request_t *r)
     ngx_http_req_status_print_item_t   *item;
     static u_char                       header[] = 
         "zone_name\tkey\tmax_active\tmax_bw\ttraffic\trequests\t"
-        "active\tbandwidth\n";
+        "active\tbandwidth\tresptime\n";
 
     if (r->method != NGX_HTTP_GET && r->method != NGX_HTTP_HEAD) {
         return NGX_HTTP_NOT_ALLOWED;
@@ -632,7 +675,7 @@ ngx_http_req_status_show_handler(ngx_http_request_t *r)
 
             size += pzone[i]->shm_zone->shm.name.len +
                 rsn->len + (sizeof("\t") - 1) * 8 +
-                (NGX_INT64_LEN) * 6;
+                (NGX_INT64_LEN) * 7; // 6 change to 7, for rt, 
 
             if (full_info){
                 size += (NGX_INT64_LEN) * 3 + (sizeof("\t") - 1) * 3;
@@ -692,13 +735,14 @@ ngx_http_req_status_show_handler(ngx_http_request_t *r)
         *b->last ++ = '\t';
 
         if (long_num){
-            b->last = ngx_sprintf(b->last, "%ui\t%ui\t%ui\t%ui\t%ui\t%ui",
+            b->last = ngx_sprintf(b->last, "%ui\t%ui\t%ui\t%ui\t%ui\t%ui\t%ui",
                     item->pdata->max_active,
                     item->pdata->max_bandwidth * 8,
                     item->pdata->traffic * 8,
                     item->pdata->requests,
-                    item->node->active,
-                    item->pdata->bandwidth * 8);
+		    item->node->active,
+                    item->pdata->bandwidth * 8,
+                    item->pdata->rt);
         } else {
             b->last = ngx_sprintf(b->last, "%ui\t", item->pdata->max_active);
             b->last = ngx_http_req_status_format_size(b->last,
@@ -714,6 +758,9 @@ ngx_http_req_status_show_handler(ngx_http_request_t *r)
 
             b->last = ngx_http_req_status_format_size(b->last,
                     item->pdata->bandwidth * 8);
+
+            *b->last ++ = '\t';
+            b->last = ngx_sprintf(b->last, "%ui", item->pdata->rt);
         }
 
         if (full_info){
@@ -1031,6 +1078,13 @@ ngx_http_req_status_init(ngx_conf_t *cf)
     }
 
     *h = ngx_http_req_status_handler;
+
+    h = ngx_array_push(&cmcf->phases[NGX_HTTP_LOG_PHASE].handlers);
+    if (h == NULL) {
+        return NGX_ERROR;
+    }
+
+    *h = ngx_http_req_status_log_handler;
 
     ngx_http_top_write_filter = ngx_http_req_status_write_filter;
 
